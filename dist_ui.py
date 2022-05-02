@@ -40,48 +40,46 @@ path = None
 circle = None
 marker = None
 num_tasks = 0
+task_list = {}
 
 def addTask(set, platform, task):
-	print("Adding a task to the task table for " + platform)
 	global num_tasks
 
 	if platform in task_list:
-		print("Updating platform with new task")
 		task_list[platform]["IP"] = task["IP"]
-		task_list[platform]["Task"] = task["Task"]
+		task_list[platform]["Delay"] = task["Delay"]
+		task_list[platform]["TTL"] = task["TTL"]
 		selected_item = set.tag_has(platform)
-		set.item(selected_item, values=(task["IP"], platform, task["Task"]))
+		set.item(selected_item, values=(task["IP"], task["Delay"], task["TTL"]))
 		
 	else:
-		print("Adding new platform to task list")
-		task_list[platform] = {"IP":task["IP"], "Task":task["Task"]}
+		task_list[platform] = {"IP":task["IP"], "Delay": task["Delay"],"TTL":task["TTL"]}
 		set.insert(parent='', index='end', iid=num_tasks, text='',
-				values=(task["IP"], platform, task["Task"]), tags=platform)
+				values=(task["IP"], task["Delay"], task["TTL"]), tags=platform)
 		num_tasks += 1	
 
 
 def createTablePane(panel):
-	print("Creating Task table")
+	print("Creating Ping table")
 	set = ttk.Treeview(panel)
 	set.pack()
 
-	set['columns'] = ('IP', 'Full_Name', 'Task')
+	set['columns'] = ('IP', 'Delay', 'TTL')
 	set.column("#0", width=0,  stretch=tk.NO)
 	set.column("IP", anchor=tk.CENTER, width=80)
-	set.column("Full_Name", anchor=tk.CENTER, width=80)
-	set.column("Task", anchor=tk.CENTER, width=80)
+	set.column("Delay", anchor=tk.CENTER, width=80)
+	set.column("TTL", anchor=tk.CENTER, width=80)
 
 	set.heading("#0", text="", anchor=tk.CENTER)
 	set.heading("IP", text="IP", anchor=tk.CENTER)
-	set.heading("Full_Name", text="Full_Name", anchor=tk.CENTER)
-	set.heading("Task", text="Task", anchor=tk.CENTER)
+	set.heading("Delay", text="Delay", anchor=tk.CENTER)
+	set.heading("TTL", text="TTL", anchor=tk.CENTER)
 
 	return set
 
 
-def addPlatform(map_widget, platform, is_blueforce = True):
+def addPlatform(map_widget, platform):
 	if platform["name"] in platform_list:
-		print("Updating platform with new information")
 		platform_list[platform["name"]]["lat"] = platform["lat"]
 		platform_list[platform["name"]]["lon"] = platform["lon"]
 
@@ -110,9 +108,7 @@ def addRoute(map_widget, locations):
 def addLocationMarker(map_widget, name, lat, lon):
 	location_marker = map_widget.set_position(
 		lat, lon, marker=True)  # Cherry Hill, NJ
-	location_marker.set_text(name)  # set new text
-	# location_marker.set_position(48.860381, 2.338594)  # change position
-	# location_marker.delete()
+	location_marker.set_text(name)
 	return location_marker
 
 
@@ -131,24 +127,6 @@ def createMapPane(panel):
 	return map_widget
 
 
-def return_to_home(stalker_id = 0):
-	print('Sending Stalker #' + str(stalker_id) + ' home')
-	mi.inject_launch_stalker(mi.beddown_loc[0], mi.beddown_loc[1], alt=300, stalker_id = stalker_id)
-	#subprocess_name = "./injectCommand.bash %s"
-	#subprocess.check_call(subprocess_name % str(stalker_id), shell=True)
-
-def add_platform_abort_button(panel, stalker_id):
-	print('Adding new mission abort button to the UI')
-	panel.add(tk.Button(root_window, text="Stalker " + str(stalker_id) + " Abort", command=lambda: return_to_home(stalker_id)))
-
-def inject_random_redforce():
-	print(1)
-
-def add_random_redforce_button(panel):
-	print('Adding new button to inject random redforce entities to the UI')
-	panel.add(tk.Button(root_window, text="Inject Random Redforce", command=inject_random_redforce, bg='red'))
-
-
 def add_spacers_to_panel(panel, num_spacers):
 	for i in range(num_spacers):
 		spacer = tk.Label(root_window,text=' ')
@@ -156,7 +134,7 @@ def add_spacers_to_panel(panel, num_spacers):
 
 
 def add_text_box(panel):
-	print('Adding new mission abort button to the UI')
+	print('Adding IP input element to the UI')
 	text = tk.StringVar().set("IP Address")
 	input_txt = tk.Entry(root_window, textvariable=text)
 	panel.add(input_txt)
@@ -180,6 +158,7 @@ def make_path(lat, lon):
 	else: marker = addLocationMarker(map1, "IP", lat, lon)
 	if path: 
 		map1.delete(path)
+		path = map1.set_path([(lat, lon), (INIT_LOC["lat"], INIT_LOC["lon"])])
 		#path.position_list = [(lat, lon), (INIT_LOC["lat"], INIT_LOC["lon"])]
 	else: path = map1.set_path([(lat, lon), (INIT_LOC["lat"], INIT_LOC["lon"])])
 
@@ -208,12 +187,17 @@ def predict(i_t):
 	proc = subprocess.run(["ping", in_str], capture_output=True)
 	proc2 = subprocess.run(["tracert", in_str], capture_output=True)
 	print(proc)
+	print(proc2)
 	ping = re.search("Average = ([0-9\.]*)ms", str(proc))
+	ping_resp = re.findall("Reply from ([0-9a-f\.:]*): bytes=([0-9]*) time=([0-9]*ms) TTL=([0-9]*)", str(proc))
+	print(ping_resp)
+	for i in range(len(ping_resp)):
+		addTask(table, str(i+1), {"IP":ping_resp[i][0], "Delay":ping_resp[i][2], "TTL":ping_resp[i][3]})
 	print(ping)	
 	#elif is_string_url(in_str):
 	d = predict_dist(float(ping[1])/1000.0)
-	print(f'd = {d}')
-	gen_circle((INIT_LOC["lat"], INIT_LOC["lon"]), d)
+	print(f'd = {abs(d)}')
+	gen_circle((INIT_LOC["lat"], INIT_LOC["lon"]), abs(d))
 
 def predict_dist(ping):
 	a = 105267.857
@@ -223,6 +207,7 @@ def predict_dist(ping):
 
 
 def gen_circle(center, radius):
+	global circle
 	radiusKm = radius / 0.621371
 	radiusLon = 1 / (111.319 * cos(center[0])) * radiusKm
 	radiusLat = 1 / 110.574 * radiusKm
@@ -234,12 +219,14 @@ def gen_circle(center, radius):
 	#Produce points.
 	points = []
 	for i in range(120):
-		points.append( ((center[0] + radiusLat *sin(theta)) % 90,
-			(center[1] + radiusLon * cos(theta)) % 180))
+		points.append( (center[0] + radiusLat *sin(theta),
+			center[1] + radiusLon * cos(theta)))
 		theta += dTheta;
 	points.append(points[0])
 	#print(points)
-	map1.set_path(points, color="#c2deab")
+	if circle: 
+		map1.delete(circle)
+	circle = map1.set_path(points, color="#c2deab")
 	
 
 def dist_calc(lat_ip, lon_ip, lat_ad, lon_ad):
@@ -294,7 +281,7 @@ leftPanel.add(table)
 
 
 # Build controls panel
-planStatusButton = tk.Label(root_window, text="ok", fg='White', bg='#353535')
+planStatusButton = tk.Label(root_window, text="Enter Network Address", fg='White', bg='#353535')
 leftPanel.add(planStatusButton)
 
 
