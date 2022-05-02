@@ -9,6 +9,7 @@ import tkinter as tk
 # standard imports
 import time
 import random
+from turtle import color
 import uuid
 import json
 import sys
@@ -16,9 +17,13 @@ import socket
 import subprocess
 import os
 import validators
+import requests
+import re
+import geocoder
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
-
+from bs4 import BeautifulSoup
+from math import radians, cos, sin, asin, sqrt, pi
 
 # 3rd party imports
 import utm
@@ -30,11 +35,10 @@ from tkinter import ttk
 from tkintermapview import TkinterMapView
 
 
-#INIT_LOC = {"lat": 39.9311644818977, "lon": -75.05127419038763}
-INIT_LOC = {"lat": 35.71689, "lon": -120.76468} # Stalker "home" airstrip (airstrip near default HIL sim location)
-
-plan_state = "PLANNING"
-
+INIT_LOC = {"lat": 41.4855, "lon": -71.4365}
+path = None
+circle = None
+marker = None
 num_tasks = 0
 
 def addTask(set, platform, task):
@@ -43,16 +47,16 @@ def addTask(set, platform, task):
 
 	if platform in task_list:
 		print("Updating platform with new task")
-		task_list[platform]["ID"] = task["ID"]
+		task_list[platform]["IP"] = task["IP"]
 		task_list[platform]["Task"] = task["Task"]
 		selected_item = set.tag_has(platform)
-		set.item(selected_item, values=(task["ID"], platform, task["Task"]))
+		set.item(selected_item, values=(task["IP"], platform, task["Task"]))
 		
 	else:
 		print("Adding new platform to task list")
-		task_list[platform] = {"ID":task["ID"], "Task":task["Task"]}
+		task_list[platform] = {"IP":task["IP"], "Task":task["Task"]}
 		set.insert(parent='', index='end', iid=num_tasks, text='',
-				values=(task["ID"], platform, task["Task"]), tags=platform)
+				values=(task["IP"], platform, task["Task"]), tags=platform)
 		num_tasks += 1	
 
 
@@ -61,14 +65,14 @@ def createTablePane(panel):
 	set = ttk.Treeview(panel)
 	set.pack()
 
-	set['columns'] = ('ID', 'Full_Name', 'Task')
+	set['columns'] = ('IP', 'Full_Name', 'Task')
 	set.column("#0", width=0,  stretch=tk.NO)
-	set.column("ID", anchor=tk.CENTER, width=80)
+	set.column("IP", anchor=tk.CENTER, width=80)
 	set.column("Full_Name", anchor=tk.CENTER, width=80)
 	set.column("Task", anchor=tk.CENTER, width=80)
 
 	set.heading("#0", text="", anchor=tk.CENTER)
-	set.heading("ID", text="ID", anchor=tk.CENTER)
+	set.heading("IP", text="IP", anchor=tk.CENTER)
 	set.heading("Full_Name", text="Full_Name", anchor=tk.CENTER)
 	set.heading("Task", text="Task", anchor=tk.CENTER)
 
@@ -118,7 +122,7 @@ def createMapPane(panel):
 
 	# configure the map
 	map_widget.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-	map_widget.set_zoom(19)
+	map_widget.set_zoom(15)
 	map_widget.set_position(INIT_LOC["lat"], INIT_LOC["lon"])
 	# map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)  # google normal
 	map_widget.set_tile_server(
@@ -159,14 +163,7 @@ def add_text_box(panel):
 	return(input_txt)
 
 def is_string_url(url_string: str) -> bool:
-    validate_url = URLValidator(verify_exists=True)
-
-    try:
-        validate_url(url_string)
-    except ValidationError:
-        return False
-
-    return True
+    return validators.url(url_string)
 
 def is_string_ip(ip_string: str) -> bool:
 	try:
@@ -175,31 +172,112 @@ def is_string_ip(ip_string: str) -> bool:
 		return False
 	return True
 
+def make_path(lat, lon):
+	global path, marker
+	print(f'{lat}, {lon}')
+	dist_calc(lat, lon, INIT_LOC["lat"], INIT_LOC["lon"])
+	if marker: marker.set_position(lat, lon)
+	else: marker = addLocationMarker(map1, "IP", lat, lon)
+	if path: 
+		map1.delete(path)
+		#path.position_list = [(lat, lon), (INIT_LOC["lat"], INIT_LOC["lon"])]
+	else: path = map1.set_path([(lat, lon), (INIT_LOC["lat"], INIT_LOC["lon"])])
+
 def check(i_t):
 	in_str = i_t.get()
-	if is_string_ip(in_str) or is_string_url(in_str):
-		response = os.system("ping " + in_str)
-		print(response)
-		# and then check the response...
-		# if response == 0:
-		# 	pingstatus = "Network Active"
-		# else:
-		# 	pingstatus = "Network Error"
-	# if validators.url(i_t.get()) == True:
-	# 	print("ok")
-	# else:
-	# 	print("not ok")
+	proc = subprocess.run(["ping", in_str], capture_output=True)
+	print(proc)
+	ip = ""
+	if is_string_ip(in_str): ip = in_str
+	else:
+		reg = re.search("Reply from ([0-9a-f\.:]*): ", str(proc))
+		print(reg[1])
+		ip = reg[1]
+	URL = f'https://db-ip.com/{ip}'
+	print(URL)
+	page = requests.get(URL)
+	soup = BeautifulSoup(page.content, "html.parser")
+	result = soup.find(id = "osm_embed")
+	re_result = re.search("marker=(-?[0-9]*\.[0-9]*),(-?[0-9]*\.[0-9]*)", str(result))
+	print(re_result)
+	lat, lon = float(re_result[1]), float(re_result[2])
+	make_path(lat, lon)
+
+def predict(i_t):
+	in_str = i_t.get()
+	proc = subprocess.run(["ping", in_str], capture_output=True)
+	proc2 = subprocess.run(["tracert", in_str], capture_output=True)
+	print(proc)
+	ping = re.search("Average = ([0-9\.]*)ms", str(proc))
+	print(ping)	
+	#elif is_string_url(in_str):
+	d = predict_dist(float(ping[1])/1000.0)
+	print(f'd = {d}')
+	gen_circle((INIT_LOC["lat"], INIT_LOC["lon"]), d)
+
+def predict_dist(ping):
+	a = 105267.857
+	b = 15191.964 
+	c = -72.5915
+	return a*(ping**2) + b*ping + c
+
+
+def gen_circle(center, radius):
+	radiusKm = radius / 0.621371
+	radiusLon = 1 / (111.319 * cos(center[0])) * radiusKm
+	radiusLat = 1 / 110.574 * radiusKm
+            
+    #Calculate amount to increment angle for number of points.
+	dTheta = 2 * pi / 120;
+	theta = 0.0
+
+	#Produce points.
+	points = []
+	for i in range(120):
+		points.append( ((center[0] + radiusLat *sin(theta)) % 90,
+			(center[1] + radiusLon * cos(theta)) % 180))
+		theta += dTheta;
+	points.append(points[0])
+	#print(points)
+	map1.set_path(points, color="#c2deab")
 	
 
+def dist_calc(lat_ip, lon_ip, lat_ad, lon_ad):
+	lon_ad, lat_ad, lon_ip, lat_ip = map(radians, [lon_ad, lat_ad, lon_ip, lat_ip])
+
+	# haversine formula 
+	dlon = lon_ip - lon_ad 
+	dlat = lat_ip - lat_ad 
+	a = sin(dlat/2)**2 + cos(lat_ad) * cos(lat_ip) * sin(dlon/2)**2
+	c = 2 * asin(sqrt(a)) 
+	km = 6367 * c
+	miles = 3958.8 * c
+	#end of calculation
+
+	#limit decimals
+	km = ('%.0f'%km)
+	miles = ('%.0f'%miles)
+
+	print('ip is about '+str(miles)+' miles away from you')	
+
+def set_loc():
+	g = geocoder.ip('me')
+	INIT_LOC["lat"] = g.latlng[0]
+	INIT_LOC["lon"] = g.latlng[1]
+
 def add_check_button(panel, i_t):
-	print('Adding new button to inject random redforce entities to the UI')
+	print('Adding new button to get location and distance of ip address')
 	panel.add(tk.Button(root_window, text="Check", command=lambda: check(i_t), bg='red'))
+
+def add_predict_button(panel, i_t):
+	print('Adding new button to predict distance from inputted ip address')
+	panel.add(tk.Button(root_window, text="Predict", command=lambda: predict(i_t), bg='red'))
 
 # Tkinter Window
 root_window = tk.Tk()
 
 # Window Settings
-root_window.title('Testing')
+root_window.title('IP Distance Prediction')
 #root_window.geometry('1040x615')
 #root_window.configure(background = '#353535')
 
@@ -216,17 +294,14 @@ leftPanel.add(table)
 
 
 # Build controls panel
-planStatusButton = tk.Label(root_window, text=plan_state, fg='White', bg='#353535')
+planStatusButton = tk.Label(root_window, text="ok", fg='White', bg='#353535')
 leftPanel.add(planStatusButton)
 
-
-#add_platform_abort_button(leftPanel,1)
-#add_platform_abort_button(leftPanel,2)
-#add_platform_abort_button(leftPanel,3)
 
 add_spacers_to_panel(leftPanel,1)
 i_t = add_text_box(leftPanel)
 add_check_button(leftPanel, i_t)
+add_predict_button(leftPanel, i_t)
 
 add_spacers_to_panel(leftPanel,8)
 
@@ -240,23 +315,12 @@ add_spacers_to_panel(leftPanel,1)
 mapPanel = tk.PanedWindow(frame)
 frame.add(mapPanel)
 
-map = createMapPane(mapPanel)
-mapPanel.add(map)
+map1 = createMapPane(mapPanel)
+mapPanel.add(map1)
 
-#END UI LAYOUT CODE
+addLocationMarker(map1, "Start", INIT_LOC["lat"], INIT_LOC["lon"])
 
-# add some sample platforms
-#addTask(table, "Stalker_1", {"ID":"101", "Task":"ISR"})
-#addTask(table, "Stalker_2", {"ID":"102", "Task":"RECON"})
-#addTask(table, "Stalker_3", {"ID":"103", "Task":"RELAY"})
-#stalker_1 = addPlatform(map,{"lat":35.3998, "lon":-120.61605, "name":"Stalker 1"})
-#stalker_2 = addPlatform(map,{"lat":35.3997, "lon":-120.61609, "name":"Stalker 2"})
 
-#test update of table
-#addTask(table, "Stalker_1", {"ID":"101", "Task":"ISR_2"})
-
-#test update of map
-#stalker_1 = addPlatform(map,{"lat":35.399, "lon":-120.616, "name":"Stalker 1"})
 
 print("Entering main UI loop...")
 root_window.mainloop()
@@ -265,3 +329,7 @@ root_window.mainloop()
 # if __name__=='__main__':
 # 	print("__main__")
 # 	configure()
+
+
+#proc = subprocess.run(["ping", "google.com"], capture_output=True)
+#print(proc)
